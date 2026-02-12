@@ -206,9 +206,12 @@ class Utils:
         scores = {}
         total_score = 0
         for client_id in selected_clients:
-            score = (shapley_weight * shapley_values[client_id] +
-                    diversity_weight * diversities[client_id] +
-                    participation_weight * (1 - frequencies[client_id]))
+            sv = shapley_values.get(client_id, 0.0)
+            dv = diversities.get(client_id, 0.0)
+            fq = frequencies.get(client_id, 1.0) 
+            score = (shapley_weight * sv +
+                    diversity_weight * dv +
+                    participation_weight * (1 - fq))
             scores[client_id] = score
             total_score += score
         
@@ -307,50 +310,38 @@ class Utils:
                 param.grad.data.add_(noise)
     
     @staticmethod
+    # utils.py 中的修改部分
+
     def pseudo_label_training(model: torch.nn.Module, 
-                            dataloader: torch.utils.data.DataLoader,
-                            device: torch.device,
-                            confidence_threshold: float = 0.9) -> float:
-        """
-        伪标签训练
-        
-        Args:
-            model: 模型
-            dataloader: 数据加载器
-            device: 设备
-            confidence_threshold: 置信度阈值
-            
-        Returns:
-            pseudo_label_ratio: 使用伪标签的比例
-        """
+                         dataloader: torch.utils.data.DataLoader,
+                         device: torch.device,
+                         confidence_threshold: float = 0.9) -> float:
+
         model.train()
         criterion = torch.nn.CrossEntropyLoss()
-        
+    
         pseudo_count = 0
         total_count = 0
+    
+        for data, _ in dataloader:
+           data = data.to(device)
         
-        for data, _ in dataloader:  # 只使用无标签数据
-            data = data.to(device)
-            
-            with torch.no_grad():
-                outputs = model(data)
-                probabilities = F.softmax(outputs, dim=1)
-                max_probs, pseudo_labels = torch.max(probabilities, dim=1)
-                
-                # 选择高置信度样本
-                mask = max_probs > confidence_threshold
-                
-                if mask.sum() > 0:
-                    pseudo_count += mask.sum().item()
-                    total_count += mask.size(0)
-                    
-                    # 计算伪标签损失
-                    pseudo_outputs = model(data[mask])
-                    pseudo_loss = criterion(pseudo_outputs, pseudo_labels[mask])
-                    
-                    # 反向传播
-                    pseudo_loss.backward()
+        # 1. 生成伪标签：不需要梯度
+           with torch.no_grad():
+              outputs = model(data)
+              probabilities = F.softmax(outputs, dim=1)
+              max_probs, pseudo_labels = torch.max(probabilities, dim=1)
+              mask = max_probs > confidence_threshold
         
+        # 2. 计算损失并反向传播：需要梯度
+           if mask.sum() > 0:
+              pseudo_count += mask.sum().item()
+              total_count += mask.size(0)
+              
+              pseudo_outputs = model(data[mask])          # 此步会构建计算图
+              pseudo_loss = criterion(pseudo_outputs, pseudo_labels[mask])
+              pseudo_loss.backward()                     # 现在可以正常反向传播
+    
         pseudo_ratio = pseudo_count / max(total_count, 1)
         return pseudo_ratio
     

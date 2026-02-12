@@ -4,6 +4,7 @@ import torch.nn as nn
 import copy
 from typing import Dict, List
 import numpy as np
+from lr_scheduler import CosineAnnealingLR
 class FedAvgClient:
     """FedAvg客户端"""
     
@@ -71,7 +72,7 @@ class FedAvgClient:
                 epoch_loss += loss.item()
                 batch_count += 1
             
-            if batch_count > 0:
+            if batch_count > 0: 
                 avg_loss = epoch_loss / batch_count
                 epoch_losses.append(avg_loss)
         
@@ -129,11 +130,18 @@ class FedAvgServer:
         """
         self.global_model = global_model
         self.device = device
-        
+        self.lr_scheduler = CosineAnnealingLR(
+            initial_lr=0.01,      # 默认初始学习率
+            total_epochs=100,     # 默认总轮数
+            warmup_epochs=5       # 默认预热5轮
+        )
         # 记录信息
         self.global_accuracies = []
         self.communication_rounds = 0
     
+    def get_current_lr(self) -> float:
+        """获取当前学习率"""
+        return self.lr_scheduler.get_lr()
     def aggregate(self, client_updates: Dict[int, Dict], 
                   client_weights: Dict[int, float] = None) -> None:
         """
@@ -182,6 +190,11 @@ class FedAvgServer:
                 new_state[name] = current_state[name]
         
         self.global_model.load_state_dict(new_state)
+        
+        current_lr = self.lr_scheduler.step()
+        # 每10轮打印一次学习率信息
+        if self.communication_rounds % 10 == 0:
+            print(f"轮次 {self.communication_rounds}: 全局学习率更新为 {current_lr:.6f}")
     
     def test_global_model(self, test_loader) -> float:
         """测试全局模型"""

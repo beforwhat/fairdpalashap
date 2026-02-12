@@ -72,7 +72,14 @@ class ExperimentFramework:
         for client_id in range(self.args.num_clients):
             # 客户端特定参数
             client_kwargs = method_params.copy()
-            
+            need_train_data = (
+            self.args.method == 'fedala' or
+            (self.args.method in ['our_method', 'our_method_no_dp'] and self.args.use_ala)
+            )
+            if need_train_data:
+              if train_data_list is None:
+                raise ValueError(f"方法 {self.args.method} 需要提供 train_data_list")
+              client_kwargs['train_data'] = train_data_list[client_id]
             if self.args.method == 'fedala' or (self.args.method in ['our_method', 'our_method_no_dp'] and self.args.use_ala):
                 client_kwargs['train_data'] = train_data_list[client_id] if train_data_list else None
             
@@ -118,6 +125,7 @@ class ExperimentFramework:
         pbar = tqdm(range(self.args.global_epochs), desc="全局训练轮次")
         
         for round_idx in pbar:
+            current_global_lr = server.get_current_lr()
             # 选择客户端
             if self.args.method in ['our_method', 'our_method_no_dp']:
                 selected_clients = server.select_clients(
@@ -147,7 +155,7 @@ class ExperimentFramework:
                 train_params = {
                     'global_model': server.global_model,
                     'local_epochs': self.args.local_epochs,
-                    'lr': self.args.lr,
+                    'lr': current_global_lr,
                     'momentum': self.args.momentum,
                     'weight_decay': self.args.weight_decay
                 }
@@ -195,7 +203,7 @@ class ExperimentFramework:
                 client_accuracies.append(result['accuracy'])
                 client_losses.append(result['loss'])
                 grad_norms.append(result.get('grad_norm', 0))
-            
+                
             # 聚合客户端更新
             if self.args.method in ['our_method', 'our_method_no_dp']:
                 # 计算聚合权重
@@ -208,7 +216,7 @@ class ExperimentFramework:
                     self.args.participation_weight
                 )
                 
-                server.aggregate(client_updates, aggregation_weights)
+                server.aggregate(client_updates, aggregation_weights,selected_clients)
             else:
                 # 平均聚合
                 server.aggregate(client_updates)
@@ -232,6 +240,7 @@ class ExperimentFramework:
                 pbar.set_postfix({
                     '全局准确率': f'{global_acc:.2f}%',
                     '客户端准确率': f'{np.mean(client_accuracies):.2f}%',
+                    '学习率': f'{current_global_lr:.4f}',
                     '公平性方差': f'{fairness_var:.4f}' if client_accuracies else '0.0000'
                 })
             

@@ -14,9 +14,9 @@ from typing import Dict, List
 from config import get_config
 from experiment_config import get_experiment_config
 from experiment_framework import ExperimentFramework
-from data.data_loader import DatasetLoader
-from models.models import ModelFactory
-from visualization.visualization import ResultVisualizer
+from data_loader import DatasetLoader
+from models import ModelFactory
+from visualization import ResultVisualizer
 
 
 def setup_environment(args):
@@ -44,67 +44,90 @@ def setup_environment(args):
 
 
 def load_data_and_models(args):
-    """加载数据和模型"""
+    """
+    加载数据并分配：
+    - 训练数据：非IID分配给每个客户端
+    - 测试数据：从全局IID测试集中均匀分配给每个客户端
+    """
     print("正在加载数据和模型...")
     
-    # 创建数据加载器
+    # 1. 创建数据加载器
     data_loader = DatasetLoader(args.dataset)
     dataset_params = data_loader.get_dataset_params()
     
-    # 加载完整数据集
-    print(f"加载 {args.dataset} 数据集...")
-    data, labels = data_loader.load_full_dataset()
+    # 2. 加载完整训练集
+    print(f"加载 {args.dataset} 训练集...")
+    train_data, train_labels = data_loader.load_full_dataset()
+    print(f"训练集总样本数: {len(train_data)}")
     
-    print(f"数据集信息:")
-    print(f"  总样本数: {len(data)}")
-    print(f"  输入维度: {dataset_params['input_dim']}")
-    print(f"  类别数: {dataset_params['num_classes']}")
-    print(f"  通道数: {dataset_params['channels']}")
+    # 3. 非IID分配训练数据（每个客户端 samples_per_client 个样本）
+    print(f"\n非IID分配训练数据给 {args.num_clients} 个客户端...")
+    print(f"每个客户端训练样本数: {args.samples_per_client}")
+    train_loaders, train_datasets, data_distributions = data_loader.distribute_data_non_iid(
+        data=train_data,
+        labels=train_labels,
+        num_clients=args.num_clients,
+        samples_per_client=args.samples_per_client,
+        dir_alpha=args.dir_alpha,
+        data_skew_type=args.data_skew_type
+    )
     
-    # 分配数据给客户端
-    print(f"\n分配数据给 {args.num_clients} 个客户端...")
-    if args.iid:
-        train_loaders, test_loaders, data_distributions = data_loader.distribute_data_iid(
-            data, labels, args.num_clients, args.samples_per_client
-        )
-        print("数据分配方式: IID (独立同分布)")
-    else:
-        train_loaders, test_loaders, data_distributions = data_loader.distribute_data_non_iid(
-            data, labels, args.num_clients, args.samples_per_client,
-            args.dir_alpha, args.data_skew_type
-        )
-        print(f"数据分配方式: Non-IID (Dirichlet α={args.dir_alpha}, 类型={args.data_skew_type})")
+    # 4. 创建全局 IID 测试集
+    print("\n创建全局 IID 测试集...")
+    global_test_loader = data_loader.create_global_test_loader(test_size=1000)
     
-    # 打印数据分布统计
-    total_samples = 0
-    class_counts_total = [0] * dataset_params['num_classes']
+    # 5. 将全局测试集均匀分配给每个客户端（IID）
+    print(f"将全局测试集均匀分配给 {args.num_clients} 个客户端...")
+    print(f"每个客户端测试样本数: {args.test_samples_per_client}")
     
-    for client_id, distribution in data_distributions.items():
-        total_samples += sum(distribution)
-        for class_id, count in enumerate(distribution):
-            class_counts_total[class_id] += count
+    # 从 global_test_loader 中提取所有数据和标签
+    test_data_list, test_label_list = [], []
+    for data, labels in global_test_loader:
+        test_data_list.append(data)
+        test_label_list.append(labels)
+    test_data = torch.cat(test_data_list)
+    test_labels = torch.cat(test_label_list)
     
-    print(f"数据分配统计:")
-    print(f"  总样本数: {total_samples}")
-    print(f"  每个客户端平均样本数: {total_samples / args.num_clients:.1f}")
-    print(f"  类别分布: {class_counts_total}")
+    client_test_loaders = data_loader.distribute_iid_test_data(
+        test_data=test_data,
+        test_labels=test_labels,
+        num_clients=args.num_clients,
+        samples_per_client=args.test_samples_per_client
+    )
     
-    # 创建全局测试集
-    print("\n创建全局测试集...")
-    global_test_loader = data_loader.create_global_test_loader()
+    # 6. 将训练数据集转换为 list of tuples（供 ALA 使用）
+    print("\n准备 ALA 训练数据...")
+    train_data_list = []
+    for ds in train_datasets:
+        tuples = []
+        for i in range(len(ds)):
+            x, y = ds[i]
+            tuples.append((x, y))
+        train_data_list.append(tuples)
     
-    # 获取模型类
+    # 7. 模型工厂函数
     def create_model():
         return ModelFactory.get_default_model(args.dataset)
     
+    # 8. 打印数据分配统计
+    total_train_samples = sum(len(ds) for ds in train_datasets)
+    total_test_samples = sum(len(loader.dataset) for loader in client_test_loaders)
+    print(f"\n数据分配完成:")
+    print(f"  总训练样本: {total_train_samples}")
+    print(f"  总测试样本: {total_test_samples}")
+    print(f"  每个客户端平均训练样本: {total_train_samples / args.num_clients:.1f}")
+    print(f"  每个客户端测试样本: {args.test_samples_per_client}")
+    
     return {
         'train_loaders': train_loaders,
-        'test_loaders': test_loaders,
-        'global_test_loader': global_test_loader,
+        'test_loaders': client_test_loaders,          # 每个客户端的 IID 测试集
+        'global_test_loader': global_test_loader,    # 全局测试集（用于评估全局模型）
         'data_distributions': data_distributions,
+        'train_data_list': train_data_list,
         'create_model': create_model,
         'dataset_params': dataset_params
     }
+
 
 
 def run_quick_test(args):
@@ -180,7 +203,8 @@ def run_ablation_study(args):
             clients, server = framework.initialize_clients_and_server(
                 model_class=data_resources['create_model'],
                 train_loaders=data_resources['train_loaders'],
-                test_loaders=data_resources['test_loaders']
+                test_loaders=data_resources['test_loaders'],
+                train_data_list=data_resources['train_data_list']
             )
             
             # 运行实验

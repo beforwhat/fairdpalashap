@@ -49,6 +49,9 @@ class BaselineFactory:
             return FedADDPClient(client_id, model, train_loader, test_loader, device)
         
         elif method == 'fedala':
+            train_data = kwargs.get('train_data')
+            if train_data is None:
+                raise ValueError(f"[FedALA] 客户端 {client_id} 必须提供 train_data")
             # FedALA需要额外参数
             return FedALAClient(
                 client_id=client_id,
@@ -74,8 +77,11 @@ class BaselineFactory:
             
             # 如果需要，设置ALA模块
             if kwargs.get('use_ala', False):
+                train_data = kwargs.get('train_data')
+                if train_data is None:
+                    raise ValueError(f"[OurMethod] 客户端 {client_id} 需要 train_data 以使用ALA")
                 ala_module = ALA(
-                    cid=client_id,
+                    client_id=client_id,
                     loss_function=nn.CrossEntropyLoss(),
                     train_data=kwargs.get('train_data'),
                     batch_size=kwargs.get('batch_size', 32),
@@ -138,7 +144,7 @@ class BaselineFactory:
             raise ValueError(f"未知的方法: {method}")
     
     @staticmethod
-    def get_method_params(method: str, args):
+    def get_method_params(method: str, args,sigma: float = 0,global_lr: float = None):
         """
         获取方法特定参数
         
@@ -149,12 +155,15 @@ class BaselineFactory:
         Returns:
             dict: 方法参数
         """
-        params = {}
+        params = { 'local_epochs': args.local_epochs,
+            'lr': global_lr if global_lr is not None else args.lr,
+            'momentum': args.momentum,
+            'weight_decay': args.weight_decay}
         
         if method == 'dp_fedavg':
             params.update({
                 'clip_norm': args.clip_init,
-                'sigma': 0  # 将在运行时计算
+                'sigma': sigma  # 将在运行时计算
             })
         
         elif method == 'ditto':
@@ -168,7 +177,7 @@ class BaselineFactory:
                 'lambda_1': args.lambda_1,
                 'lambda_2': args.lambda_2,
                 'beta': args.beta,
-                'sigma0': 0,  # 将在运行时计算
+                'sigma0':  sigma,  # 将在运行时计算
                 'clipping_bound': args.clip_init,
                 'no_clip': False,
                 'no_noise': False
@@ -194,5 +203,15 @@ class BaselineFactory:
                 'use_pseudo': args.use_pseudo,
                 'use_adaptive_clip': args.use_adaptive_clip
             })
+            if method == 'our_method':
+                params.update({
+                    'add_dp_noise': True,
+                    'sigma': sigma
+                })
+            else:
+                params.update({
+                    'add_dp_noise': False,
+                    'sigma': 0
+                })
         
         return params
