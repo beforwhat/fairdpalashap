@@ -64,6 +64,8 @@ class ALA:
 
         # 随机采样部分本地训练数据
         rand_ratio = self.rand_percent / 100
+        if self.train_data is None or len(self.train_data) == 0:
+           return
         rand_num = int(rand_ratio * len(self.train_data))
         
         if rand_num == 0:
@@ -125,11 +127,11 @@ class ALA:
         # 权重学习
         losses = []  # 记录损失
         cnt = 0  # 权重训练迭代计数器
-        
+        MAX_ITER = 30   # 可根据需要调整
+        cnt = 0
         while True:
             epoch_loss = 0
             batch_count = 0
-            
             for x, y in rand_loader:
                 if isinstance(x, list):
                     x = [xi.to(self.device) for xi in x]
@@ -170,6 +172,10 @@ class ALA:
                 if self.client_id < 10:  # 只打印前10个客户端的日志
                     print(f'Client: {self.client_id}, Std: {np.std(losses[-self.num_pre_loss:]):.4f}, ALA epochs: {cnt}')
                 break
+            if cnt >= MAX_ITER:
+               if self.client_id < 10:
+                  print(f'Client {self.client_id}: 达到最大迭代 {MAX_ITER}，强制退出')
+               break
 
         self.start_phase = False
 
