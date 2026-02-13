@@ -170,9 +170,8 @@ class DPFedAvgServer(FedAvgServer):
         
         # 采样率
         q = num_selected / total_clients
-        
-        # 简化计算（实际应使用更精确的隐私会计）
-        sigma = (q * np.sqrt(2 * np.log(1.25 / target_delta))) / epsilon_per_round
+
+        sigma = np.sqrt(2 * np.log(1.25 / target_delta)) / epsilon_per_round
         
         self.noise_scale = sigma
         

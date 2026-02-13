@@ -291,8 +291,7 @@ class Utils:
     @staticmethod
     def add_dp_noise(model: torch.nn.Module, 
                     clip_norm: float, 
-                    sigma: float,
-                    sensitivity: float = 1.0) -> None:
+                    sigma: float) -> None:
         """
         添加差分隐私噪声
         
@@ -305,7 +304,7 @@ class Utils:
         for param in model.parameters():
             if param.grad is not None:
                 # 计算噪声
-                noise_scale = sigma * sensitivity * clip_norm
+                noise_scale = sigma* clip_norm
                 noise = torch.randn_like(param.grad.data) * noise_scale
                 param.grad.data.add_(noise)
     

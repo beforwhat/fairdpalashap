@@ -365,7 +365,7 @@ class OurMethodServer:
         
         # 简化计算，实际应根据隐私会计计算
         q = num_selected / total_clients  # 采样率
-        sigma = (q * np.sqrt(2 * np.log(1.25 / target_delta))) / epsilon_per_round
+        sigma = (np.sqrt(2 * np.log(1.25 / target_delta))) / epsilon_per_round
         
         return sigma
     def test_global_model(self, test_loader) -> float:
