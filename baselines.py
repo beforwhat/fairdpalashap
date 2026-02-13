@@ -8,9 +8,10 @@ import torch.nn as nn
 from fedavg import FedAvgClient, FedAvgServer
 from dp_fedavg import DPFedAvgClient, DPFedAvgServer
 from ditto import DittoClient, DittoServer
-from fedaddp_module import FedADDPClient
+from fedaddp_module import FedADDPClient,FedADDPServer
 from fedala_module import FedALAClient
 from ala import ALA
+from my_ala import MYALA
 # 导入你的方法
 from my_method import OurMethodClient, OurMethodServer
 
@@ -80,7 +81,7 @@ class BaselineFactory:
                 train_data = kwargs.get('train_data')
                 if train_data is None:
                     raise ValueError(f"[OurMethod] 客户端 {client_id} 需要 train_data 以使用ALA")
-                ala_module = ALA(
+                ala_module = MYALA(
                     client_id=client_id,
                     loss_function=nn.CrossEntropyLoss(),
                     train_data=kwargs.get('train_data'),
@@ -90,7 +91,8 @@ class BaselineFactory:
                     eta=kwargs.get('eta', 1.0),
                     device=device,
                     threshold=kwargs.get('threshold', 0.1),
-                    num_pre_loss=kwargs.get('num_pre_loss', 10)
+                    num_pre_loss=kwargs.get('num_pre_loss', 10),
+                    use_pseudo=kwargs.get('use_pseudo', False)
                 )
                 client.set_ala_module(ala_module)
             
@@ -114,18 +116,20 @@ class BaselineFactory:
             server: 服务器实例
         """
         if method == 'fedavg':
-            return FedAvgServer(global_model, device)
+            return FedAvgServer(global_model, device,kwargs.get('client_data_sizes', None))
         
         elif method == 'dp_fedavg':
-            return DPFedAvgServer(global_model, device)
+            return DPFedAvgServer(global_model, device,kwargs.get('client_data_sizes', None))
         
         elif method == 'ditto':
-            return DittoServer(global_model, device)
+            return DittoServer(global_model, device,kwargs.get('client_data_sizes', None))
         
-        elif method in ['fedaddp', 'fedala']:
+        elif method =='fedala':
             # 对于这些方法，使用FedAvgServer作为基础
-            return FedAvgServer(global_model, device)
-        
+            return FedAvgServer(global_model, device,kwargs.get('client_data_sizes', None))
+        elif method == 'fedaddp':
+            # FedADDP需要额外参数
+            return FedADDPServer(global_model, device)
         elif method in ['our_method', 'our_method_no_dp']:
             # 你的方法
             server = OurMethodServer(

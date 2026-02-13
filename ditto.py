@@ -159,8 +159,8 @@ class DittoClient:
 class DittoServer(FedAvgServer):
     """Ditto服务器"""
     
-    def __init__(self, global_model: nn.Module, device: torch.device):
-        super().__init__(global_model, device)
+    def __init__(self, global_model: nn.Module, device: torch.device,client_data_sizes: Dict[int, int] = None):
+        super().__init__(global_model, device,client_data_sizes)
         
         # Ditto特定记录
         self.personal_accuracies = []

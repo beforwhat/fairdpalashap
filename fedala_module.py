@@ -124,7 +124,7 @@ class FedALAClient:
     def test(self) -> float:
         """测试模型"""
         self.model.eval()
-        self.model.to(self.device)
+        self.model.to(self.device)  
         
         correct = 0
         total = 0

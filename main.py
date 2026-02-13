@@ -128,8 +128,6 @@ def load_data_and_models(args):
         'dataset_params': dataset_params
     }
 
-
-
 def run_quick_test(args):
     """运行快速测试"""
     print("\n" + "="*80)

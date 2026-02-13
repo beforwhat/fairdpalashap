@@ -44,9 +44,10 @@ class ALA:
         self.threshold = threshold
         self.num_pre_loss = num_pre_loss
         self.device = device
-
+        
         self.weights = None  # 可学习的本地聚合权重
         self.start_phase = True
+        
 
     def adaptive_local_aggregation(self, 
                                  global_model: nn.Module,

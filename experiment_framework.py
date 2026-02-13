@@ -55,11 +55,14 @@ class ExperimentFramework:
         
         # 获取方法特定参数
         method_params = BaselineFactory.get_method_params(self.args.method, self.args)
-        
+        client_data_sizes = {}
+        for client_id, loader in enumerate(train_loaders):
+            client_data_sizes[client_id] = len(loader.dataset)
         # 创建服务器
         server_kwargs = {
             'num_clients': self.args.num_clients,
-            'data_distributions': self.data_distributions
+            'data_distributions': self.data_distributions,
+            'client_data_sizes': client_data_sizes
         }
         server_kwargs.update(method_params)
         
@@ -116,7 +119,8 @@ class ExperimentFramework:
                     self.args.target_delta,
                     self.args.global_epochs,
                     self.args.num_selected,
-                    self.args.num_clients
+                    self.args.num_clients,
+                    self.args.local_epochs
                 )
                 print(f"DP噪声尺度: {sigma:.4f}")
                 print(f"隐私预算: ε={self.args.target_epsilon}, δ={self.args.target_delta}")

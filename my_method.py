@@ -89,18 +89,6 @@ class OurMethodClient:
                optimizer.zero_grad()
                outputs = self.model(data)
                loss = criterion(outputs, labels)
-
-            # 伪标签训练
-               pseudo_ratio = 0
-               if use_pseudo and batch_idx % 2 == 0:
-                    with torch.no_grad():
-                        pseudo_out = self.model(data)
-                        probs = F.softmax(pseudo_out, dim=1)
-                        max_probs, pseudo_labels = torch.max(probs, dim=1)
-                        mask = max_probs > 0.9
-                    if mask.sum() > 0:
-                        pseudo_loss = criterion(pseudo_out[mask], pseudo_labels[mask])
-                        loss = loss + 0.5 * pseudo_loss
                loss.backward()
                grad_norm = Utils.clip_gradients(self.model, self.clip_norm)
                grad_norms.append(grad_norm)
@@ -343,30 +331,36 @@ class OurMethodServer:
         
         self.global_model.load_state_dict(new_state)
     
-    def compute_noise_scale(self, 
-                          target_epsilon: float,
-                          target_delta: float,
-                          num_rounds: int,
-                          num_selected: int,total_clients: int) -> float:
+    def compute_noise_scale(self, target_epsilon: float, 
+                           target_delta: float, 
+                           num_rounds: int,
+                           num_selected: int,
+                           total_clients: int,local_epochs: int) -> float:
         """
         计算噪声尺度
         
         Args:
-            target_epsilon: 目标隐私预算
+            target_epsilon: 总隐私预算
             target_delta: 目标δ
             num_rounds: 总轮数
             num_selected: 每轮选择客户端数
+            total_clients: 总客户端数
             
         Returns:
             sigma: 噪声尺度
         """
         # 每轮分配的隐私预算
-        epsilon_per_round = target_epsilon / num_rounds
+        epsilon_per_round = target_epsilon / np.sqrt(num_rounds)
         
-        # 简化计算，实际应根据隐私会计计算
-        q = num_selected / total_clients  # 采样率
-        sigma = (np.sqrt(2 * np.log(1.25 / target_delta))) / epsilon_per_round
+        # 采样率
+        q = num_selected / total_clients
+        epsilon_per_local = epsilon_per_round / np.sqrt(q)
+        epsilon_per_local_dp = epsilon_per_local / np.sqrt(local_epochs)
+
+        sigma = np.sqrt(2 * np.log(1.25 / target_delta)) /  (epsilon_per_local_dp)
         
+        self.noise_scale = sigma
+        print(f'噪声尺度: {sigma:.6f}, 每轮隐私预算: {epsilon_per_round:.6f}, 每轮本地隐私预算: {epsilon_per_local:.6f}, 每轮本地DP隐私预算: {epsilon_per_local_dp:.6f}')
         return sigma
     def test_global_model(self, test_loader) -> float:
         """测试全局模型"""

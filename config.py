@@ -29,17 +29,17 @@ class Config:
                            help='联邦学习方法')
         
         # ==================== 数据参数 ====================
-        parser.add_argument('--dataset', type=str, default='Synthetic',
+        parser.add_argument('--dataset', type=str, default='MNIST',
                            choices=['CIFAR10', 'FEMNIST', 'SVHN', 'Synthetic', 'MNIST'],
                            help='数据集')
-        parser.add_argument('--num_clients', type=int, default=100, help='客户端总数')
-        parser.add_argument('--samples_per_client', type=int, default=500, help='每个客户端样本数')
-        parser.add_argument('--test_samples_per_client', type=int, default=100, 
+        parser.add_argument('--num_clients', type=int, default=20, help='客户端总数')
+        parser.add_argument('--samples_per_client', type=int, default=1000, help='每个客户端样本数')
+        parser.add_argument('--test_samples_per_client', type=int, default=500, 
                            help='每个客户端测试样本数')
         
         # 非IID参数
         parser.add_argument('--iid', action='store_true', help='是否使用IID数据')
-        parser.add_argument('--dir_alpha', type=float, default=0.5, 
+        parser.add_argument('--dir_alpha', type=float, default=0.3, 
                            help='Dirichlet分布参数，越小非IID程度越高')
         parser.add_argument('--data_skew_type', type=str, default='label_distribution',
                            choices=['label_distribution', 'quantity', 'feature'],
@@ -47,7 +47,7 @@ class Config:
         
         # ==================== 联邦学习参数 ====================
         parser.add_argument('--num_selected', type=int, default=10, help='每轮选择的客户端数')
-        parser.add_argument('--global_epochs', type=int, default=50, help='全局训练轮数')
+        parser.add_argument('--global_epochs', type=int, default=100, help='全局训练轮数')
         parser.add_argument('--local_epochs', type=int, default=5, help='本地训练轮数')
         parser.add_argument('--batch_size', type=int, default=32, help='批次大小')
         
@@ -57,7 +57,7 @@ class Config:
         parser.add_argument('--weight_decay', type=float, default=1e-4, help='权重衰减')
         
         # ==================== 隐私参数 ====================
-        parser.add_argument('--target_epsilon', type=float, default=1.0, help='总隐私预算ε')
+        parser.add_argument('--target_epsilon', type=float, default=2.0, help='总隐私预算ε')
         parser.add_argument('--target_delta', type=float, default=1e-5, help='隐私参数δ')
         parser.add_argument('--clip_init', type=float, default=1.0, help='初始裁剪阈值')
         
@@ -189,21 +189,21 @@ class Config:
         """获取基础配置（不包含方法特定的默认值）"""
         base_config = {
             'mode': 'full_experiment',
-            'dataset': 'Synthetic',
-            'num_clients': 100,
-            'samples_per_client': 500,
-            'test_samples_per_client': 100,
+            'dataset': 'MNIST',
+            'num_clients': 20,
+            'samples_per_client': 1000,
+            'test_samples_per_client': 500,
             'iid': False,
-            'dir_alpha': 0.5,
+            'dir_alpha': 0.3,
             'data_skew_type': 'label_distribution',
             'num_selected': 10,
-            'global_epochs': 50,
-            'local_epochs': 5,
+            'global_epochs': 100,
+            'local_epochs': 10,
             'batch_size': 32,
             'lr': 0.01,
             'momentum': 0.9,
             'weight_decay': 1e-4,
-            'target_epsilon': 1.0,
+            'target_epsilon': 2.0,
             'target_delta': 1e-5,
             'clip_init': 1.0,
             'device': 'cuda' if torch.cuda.is_available() else 'cpu',

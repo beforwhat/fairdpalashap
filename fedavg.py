@@ -120,7 +120,7 @@ class FedAvgClient:
 class FedAvgServer:
     """FedAvg服务器"""
     
-    def __init__(self, global_model: nn.Module, device: torch.device):
+    def __init__(self, global_model: nn.Module, device: torch.device,client_data_sizes: Dict[int, int] = None):
         """
         初始化FedAvg服务器
         
@@ -138,7 +138,7 @@ class FedAvgServer:
         # 记录信息
         self.global_accuracies = []
         self.communication_rounds = 0
-    
+        self.client_data_sizes = client_data_sizes or {} 
     def get_current_lr(self) -> float:
         """获取当前学习率"""
         return self.lr_scheduler.get_lr()
@@ -160,7 +160,10 @@ class FedAvgServer:
         
         # 如果没有指定权重，则平均
         if client_weights is None:
-            client_weights = {cid: 1.0/len(selected_clients) for cid in selected_clients}
+        # 获取选中客户端的数据量
+           sizes = [self.client_data_sizes.get(cid, 1.0) for cid in selected_clients]
+           total = sum(sizes)
+           client_weights = {cid: size / total for cid, size in zip(selected_clients, sizes)}
         
         # 初始化全局更新
         global_update = {}

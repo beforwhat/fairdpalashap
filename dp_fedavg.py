@@ -140,8 +140,8 @@ class DPFedAvgClient:
 class DPFedAvgServer(FedAvgServer):
     """DP-FedAvg服务器"""
     
-    def __init__(self, global_model: nn.Module, device: torch.device):
-        super().__init__(global_model, device)
+    def __init__(self, global_model: nn.Module, device: torch.device,client_data_sizes: Dict[int, int] = None):
+        super().__init__(global_model, device,client_data_sizes)
         
         # DP相关参数
         self.privacy_spent = 0
@@ -151,7 +151,7 @@ class DPFedAvgServer(FedAvgServer):
                            target_delta: float, 
                            num_rounds: int,
                            num_selected: int,
-                           total_clients: int) -> float:
+                           total_clients: int,local_epochs: int) -> float:
         """
         计算噪声尺度
         
@@ -166,12 +166,14 @@ class DPFedAvgServer(FedAvgServer):
             sigma: 噪声尺度
         """
         # 每轮分配的隐私预算
-        epsilon_per_round = target_epsilon / num_rounds
+        epsilon_per_round = target_epsilon / np.sqrt(num_rounds)
         
         # 采样率
         q = num_selected / total_clients
+        epsilon_per_local = epsilon_per_round / np.sqrt(q)
+        epsilon_per_local_dp = epsilon_per_local / np.sqrt(local_epochs)
 
-        sigma = np.sqrt(2 * np.log(1.25 / target_delta)) / epsilon_per_round
+        sigma = np.sqrt(2 * np.log(1.25 / target_delta)) /  (epsilon_per_local_dp)
         
         self.noise_scale = sigma
         
