@@ -5,6 +5,7 @@ import copy
 from typing import Dict, List
 import numpy as np
 from lr_scheduler import CosineAnnealingLR
+from utils import Utils
 class FedAvgClient:
     """FedAvg客户端"""
     
@@ -25,7 +26,7 @@ class FedAvgClient:
         self.train_loader = train_loader
         self.test_loader = test_loader
         self.device = device
-        
+        self.clip_norm = 1.0  # 初始裁剪阈值
         # 历史信息
         self.train_losses = []
         self.test_accuracies = []
@@ -45,11 +46,9 @@ class FedAvgClient:
         self.model.train()
         
         # 优化器
-        optimizer = torch.optim.SGD(
+        optimizer = torch.optim.Adam(
             self.model.parameters(),
-            lr=lr,
-            momentum=momentum,
-            weight_decay=weight_decay
+            lr=lr
         )
         
         criterion = nn.CrossEntropyLoss()
@@ -67,6 +66,10 @@ class FedAvgClient:
                 outputs = self.model(data)
                 loss = criterion(outputs, labels)
                 loss.backward()
+                Utils.clip_gradients_by_value(
+                    self.model, 
+                    clip_val=self.clip_norm    # 使用指定分位数作为裁剪阈值
+                )
                 optimizer.step()
                 
                 epoch_loss += loss.item()
@@ -94,7 +97,7 @@ class FedAvgClient:
             'update': model_update,
             'accuracy': accuracy,
             'loss': np.mean(epoch_losses) if epoch_losses else 0,
-            'grad_norm': 0  # FedAvg不记录梯度范数
+            'grad_norm': 0.0  # FedAvg记录梯度范数
         }
     
     def test(self) -> float:
@@ -131,7 +134,7 @@ class FedAvgServer:
         self.global_model = global_model
         self.device = device
         self.lr_scheduler = CosineAnnealingLR(
-            initial_lr=0.01,      # 默认初始学习率
+            initial_lr=1e-3,      # 默认初始学习率
             total_epochs=100,     # 默认总轮数
             warmup_epochs=5       # 默认预热5轮
         )

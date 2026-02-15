@@ -40,7 +40,7 @@ class BaselineFactory:
             return FedAvgClient(client_id, model, train_loader, test_loader, device)
         
         elif method == 'dp_fedavg':
-            return DPFedAvgClient(client_id, model, train_loader, test_loader, device)
+            return DPFedAvgClient(client_id, model, train_loader, test_loader, device, kwargs.get('batch_size', 32))
         
         elif method == 'ditto':
             return DittoClient(client_id, model, train_loader, test_loader, device)
@@ -73,7 +73,9 @@ class BaselineFactory:
             # 你的方法
             client = OurMethodClient(
                 client_id, model, train_loader, test_loader, 
-                kwargs.get('data_distribution', []), device
+                kwargs.get('data_distribution', []), device,
+                kwargs.get('use_pseudo', False),
+                kwargs.get('local_epochs', 32)
             )
             
             # 如果需要，设置ALA模块
@@ -94,7 +96,7 @@ class BaselineFactory:
                     num_pre_loss=kwargs.get('num_pre_loss', 10),
                     use_pseudo=kwargs.get('use_pseudo', False)
                 )
-                client.set_ala_module(ala_module)
+                client.set_ala_module(ala_module) 
             
             return client
         
@@ -119,7 +121,7 @@ class BaselineFactory:
             return FedAvgServer(global_model, device,kwargs.get('client_data_sizes', None))
         
         elif method == 'dp_fedavg':
-            return DPFedAvgServer(global_model, device,kwargs.get('client_data_sizes', None))
+            return DPFedAvgServer(global_model, device,kwargs.get('samples_per_client', 1000),kwargs.get('client_data_sizes', None),kwargs.get('batch_size', 32),kwargs.get('local_epochs', 10))
         
         elif method == 'ditto':
             return DittoServer(global_model, device,kwargs.get('client_data_sizes', None))
@@ -129,13 +131,15 @@ class BaselineFactory:
             return FedAvgServer(global_model, device,kwargs.get('client_data_sizes', None))
         elif method == 'fedaddp':
             # FedADDP需要额外参数
-            return FedADDPServer(global_model, device)
+            return FedADDPServer(global_model, device,kwargs.get('num_clients', 100),kwargs.get('client_data_sizes', None))
         elif method in ['our_method', 'our_method_no_dp']:
             # 你的方法
             server = OurMethodServer(
                 global_model=global_model,
                 num_clients=kwargs.get('num_clients', 100),
-                device=device
+                device=device,
+                samples_per_client=kwargs.get('samples_per_client', 1000),batch_size=kwargs.get('batch_size', 32),
+                local_epochs=kwargs.get('local_epochs', 10)
             )
             
             # 设置数据分布

@@ -6,11 +6,12 @@ import copy
 from typing import Dict
 from utils import Utils
 from fedavg import FedAvgServer
+from opacus.accountants.utils import get_noise_multiplier
 class DPFedAvgClient:
     """DP-FedAvg客户端（带差分隐私）"""
     
     def __init__(self, client_id: int, model: nn.Module,
-                 train_loader, test_loader, device):
+                 train_loader, test_loader, device,client_data_size):
         """
         初始化DP-FedAvg客户端
         
@@ -26,11 +27,12 @@ class DPFedAvgClient:
         self.train_loader = train_loader
         self.test_loader = test_loader
         self.device = device
-        
+        self.client_data_size = client_data_size
         # 历史信息
         self.grad_norms = []
         self.clip_norm = 1.0  # 初始裁剪阈值
-    
+        self.sensitivity = 1.0                     # 初始敏感度
+
     def local_train(self, global_model: nn.Module,
                     local_epochs: int, lr: float,
                     momentum: float, weight_decay: float,
@@ -46,7 +48,6 @@ class DPFedAvgClient:
             dict: 包含模型更新、准确率和梯度范数
         """
         # 设置裁剪阈值
-        self.clip_norm = clip_norm
         
         # 加载全局模型参数
         self.model.load_state_dict(global_model.state_dict())
@@ -54,11 +55,9 @@ class DPFedAvgClient:
         self.model.train()
         
         # 优化器
-        optimizer = torch.optim.SGD(
+        optimizer = torch.optim.Adam(
             self.model.parameters(),
-            lr=lr,
-            momentum=momentum,
-            weight_decay=weight_decay
+            lr=lr
         )
         
         criterion = nn.CrossEntropyLoss()
@@ -78,15 +77,14 @@ class DPFedAvgClient:
                 outputs = self.model(data)
                 loss = criterion(outputs, labels)
                 loss.backward()
-                
-                # 梯度裁剪
-                grad_norm = Utils.clip_gradients(self.model, self.clip_norm)
+                grad_norm = Utils.compute_norm(self.model)
+                Utils.clip_gradients_by_value(
+                    self.model, 
+                    clip_val=self.clip_norm    # 使用指定分位数作为裁剪阈值
+                )
                 grad_norms.append(grad_norm)
-                
-                # 添加DP噪声
-                if sigma > 0:
-                    Utils.add_dp_noise(self.model, self.clip_norm, sigma)
-                
+               
+                Utils.add_dp_noise(self.model, self.sensitivity, sigma,batch_size=data.size(0),device=self.device)
                 optimizer.step()
                 
                 epoch_loss += loss.item()
@@ -106,14 +104,13 @@ class DPFedAvgClient:
         
         for name in global_state.keys():
             model_update[name] = local_state[name] - global_state[name]
-        
         avg_grad_norm = np.mean(grad_norms) if grad_norms else 0
         self.grad_norms.append(avg_grad_norm)
-        
+        avg_loss = np.mean(epoch_losses) if epoch_losses else 0
         return {
             'update': model_update,
             'accuracy': accuracy,
-            'loss': np.mean(epoch_losses) if epoch_losses else 0,
+            'loss': avg_loss,
             'grad_norm': avg_grad_norm
         }
     
@@ -140,18 +137,20 @@ class DPFedAvgClient:
 class DPFedAvgServer(FedAvgServer):
     """DP-FedAvg服务器"""
     
-    def __init__(self, global_model: nn.Module, device: torch.device,client_data_sizes: Dict[int, int] = None):
+    def __init__(self, global_model: nn.Module, device: torch.device,samples_per_client,client_data_sizes: Dict[int, int]  ,batch_size: int,local_epochs: int):
         super().__init__(global_model, device,client_data_sizes)
         
         # DP相关参数
         self.privacy_spent = 0
         self.noise_scale = 0
-    
+        self.samples_per_client = samples_per_client
+        self.local_epochs = local_epochs
+        self.batch_size = batch_size
     def compute_noise_scale(self, target_epsilon: float, 
                            target_delta: float, 
                            num_rounds: int,
                            num_selected: int,
-                           total_clients: int,local_epochs: int) -> float:
+                           total_clients: int) -> float:
         """
         计算噪声尺度
         
@@ -166,15 +165,21 @@ class DPFedAvgServer(FedAvgServer):
             sigma: 噪声尺度
         """
         # 每轮分配的隐私预算
-        epsilon_per_round = target_epsilon / np.sqrt(num_rounds)
-        
-        # 采样率
         q = num_selected / total_clients
-        epsilon_per_local = epsilon_per_round / np.sqrt(q)
-        epsilon_per_local_dp = epsilon_per_local / np.sqrt(local_epochs)
+        
+        # 计算每个客户端的步数（假设所有客户端样本数相同）
+        steps_per_epoch = max(1, self.samples_per_client // self.batch_size)
+        steps_per_round = self.local_epochs * steps_per_epoch
+        total_steps = num_rounds * num_selected * steps_per_round
 
-        sigma = np.sqrt(2 * np.log(1.25 / target_delta)) /  (epsilon_per_local_dp)
+        # 使用 RDP accountant 求解 sigma
+        sigma = get_noise_multiplier(
+            target_epsilon=target_epsilon,
+            target_delta=target_delta,
+            sample_rate=q,
+            steps=total_steps,
+            accountant='rdp'   # 使用 RDP 会计
+        )
         
         self.noise_scale = sigma
-        
         return sigma

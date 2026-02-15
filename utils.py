@@ -6,7 +6,7 @@ from itertools import chain, combinations
 import torch.nn.functional as F
 from typing import List, Dict, Tuple
 import copy
-
+from opacus.accountants.utils import get_noise_multiplier
 class Utils:
     """工具函数类"""
     
@@ -141,8 +141,8 @@ class Utils:
                                frequencies: Dict[int, float],
                                num_select: int,
                                shapley_weight: float = 0.5,
-                               diversity_weight: float = 0.3,
-                               participation_weight: float = 0.2) -> List[int]:
+                               diversity_weight: float = 0.2,
+                               participation_weight: float = 0.3) -> List[int]:
         """
         基于Shapley值、数据多样性和参与频率选择客户端
         
@@ -184,9 +184,9 @@ class Utils:
                                   diversities: Dict[int, float],
                                   frequencies: Dict[int, float],
                                   selected_clients: List[int],
-                                  shapley_weight: float = 0.5,
-                                  diversity_weight: float = 0.3,
-                                  participation_weight: float = 0.2) -> Dict[int, float]:
+                                  shapley_weight: float = 0.8,
+                                  diversity_weight: float = 0.1,
+                                  participation_weight: float = 0.1) -> Dict[int, float]:
         """
         计算客户端聚合权重
         
@@ -226,72 +226,73 @@ class Utils:
         return weights
     
     @staticmethod
-    def adaptive_clipping(grad_norm: float, 
-                         last_grad_norm: float, 
-                         shapley_value: float,
-                         last_clip: float,
-                         f_param: float = 0.8,
-                         u_param: float = 0.5) -> float:
-        """
-        自适应梯度裁剪
-        
-        Args:
-            grad_norm: 当前梯度范数
-            last_grad_norm: 上一轮梯度范数
-            shapley_value: Shapley值
-            last_clip: 上一轮裁剪阈值
-            f_param: f参数
-            u_param: u参数
-            
-        Returns:
-            new_clip: 新的裁剪阈值
-        """
-        if last_grad_norm > 0:
-            gradient_change = (grad_norm - last_grad_norm) / last_grad_norm
+    def adaptive_clipping( shapley_value,
+                               last_clip,last_grad_norm,current_grad_norm, f_param=0.8, u_param=0.5) -> float:
+        relative_change = (current_grad_norm - last_grad_norm) / last_grad_norm
+        if relative_change > 0:
+           new_clip = last_clip * (1 +shapley_value)
         else:
-            gradient_change = 0
-        
-        # 计算新的裁剪阈值
-        new_clip = last_clip * (1 + f_param * shapley_value - u_param * gradient_change)
-        
-        # 确保裁剪阈值为正
-        new_clip = max(new_clip, 1e-6)
-        
+            new_clip = last_clip * (1 -shapley_value)
+
+    # 3. 限制阈值范围（避免发散）
+        new_clip = max(new_clip, 0.1)           # 不低于极小值
+        new_clip = min(new_clip, 0.9)  # 单次增长不超过 5 倍（防突变）
         return new_clip
     
-    @staticmethod
-    def clip_gradients(model: torch.nn.Module, clip_norm: float) -> float:
-        """
-        裁剪梯度
-        
-        Args:
-            model: 模型
-            clip_norm: 裁剪阈值
-            
-        Returns:
-            grad_norm: 裁剪前的梯度范数
-        """
-        total_norm = 0
+
+    def clip_gradients(model: torch.nn.Module, quantile: float) -> float:
+  
+        param_grad_norms = []
+        device = next(model.parameters()).device  # 对齐模型设备（CPU/GPU）
+        for param in model.parameters():
+           if param.grad is not None:
+            # 直接计算张量范数，不转item，保留张量类型
+              grad_norm = param.grad.data.norm(2)
+              param_grad_norms.append(grad_norm)
+    
+        if not param_grad_norms:
+           return 0.0
+    
+    # 2. 计算全局梯度总范数（纯torch）
+        param_grad_norms_tensor = torch.stack(param_grad_norms).to(device)
+        total_norm = torch.sqrt(torch.sum(param_grad_norms_tensor **2)).item()
+    
+        clip_val = torch.quantile(param_grad_norms_tensor, quantile, dim=0, keepdim=True).item()
+
         for param in model.parameters():
             if param.grad is not None:
-                param_norm = param.grad.data.norm(2)
-                total_norm += param_norm.item() ** 2
-        
-        total_norm = total_norm ** 0.5
-        
-        # 裁剪梯度
-        clip_coef = clip_norm / (total_norm + 1e-6)
-        if clip_coef < 1:
-            for param in model.parameters():
-                if param.grad is not None:
-                    param.grad.data.mul_(clip_coef)
-        
-        return total_norm
+               param_grad_norm = param.grad.data.norm(2)
+               if param_grad_norm > clip_val:
+                  clip_coef = clip_val / (param_grad_norm + 1e-6)
+                  param.grad.data.mul_(clip_coef)
     
+        return total_norm
+    def clip_gradients_by_value(model: torch.nn.Module, clip_val: float) -> float:
+
+        # 裁剪梯度
+        for param in model.parameters():
+            if param.grad is not None:
+                param_grad_norm = param.grad.data.norm(2)
+                if param_grad_norm > clip_val:
+                    clip_coef = clip_val / (param_grad_norm + 1e-6)
+                    param.grad.data.mul_(clip_coef) 
+        return clip_val
+    
+    def compute_norm(model: torch.nn.Module) -> float:
+        
+        param_norms = []
+        for param in model.parameters():
+            if param.grad is not None:
+                norm = param.grad.data.norm(2).item()
+                param_norms.append(norm)
+        if not param_norms:
+           return 0.0
+        total_norm = sum(n**2 for n in param_norms) ** 0.5
+        return total_norm
     @staticmethod
     def add_dp_noise(model: torch.nn.Module, 
-                    clip_norm: float, 
-                    sigma: float) -> None:
+                    sensitive: float, 
+                    sigma: float,batch_size,device) -> None:
         """
         添加差分隐私噪声
         
@@ -301,12 +302,12 @@ class Utils:
             sigma: 噪声尺度
             sensitivity: 敏感度
         """
+        
+        std = (sensitive * sigma) / batch_size   # 平均梯度上的噪声标准差
         for param in model.parameters():
             if param.grad is not None:
-                # 计算噪声
-                noise_scale = sigma* clip_norm
-                noise = torch.randn_like(param.grad.data) * noise_scale
-                param.grad.data.add_(noise)
+                noise = torch.normal(0, std, size=param.grad.shape, device=device)
+                param.grad.add_(noise)
     
     @staticmethod
     # utils.py 中的修改部分
@@ -379,3 +380,56 @@ class Utils:
         fisher_diag = [f / n_batches for f in fisher_diag]
         
         return fisher_diag
+    def compute_noise_scale(target_epsilon: float, 
+                           target_delta: float, 
+                         
+                           global_epoch: int) -> float:
+        """
+        计算噪声尺度
+        
+        Args:
+            target_epsilon: 总隐私预算
+            target_delta: 目标δ
+            num_rounds: 总轮数
+            num_selected: 每轮选择客户端数
+            total_clients: 总客户端数
+            
+        Returns:
+            sigma: 噪声尺度
+        """
+        # 每轮分配的隐私预算
+        
+        alpha = np.ceil(np.log2(1 / target_delta) / target_epsilon + 1)
+
+        temp = 2 * (target_epsilon + np.log(target_delta) / (alpha - 1))
+        sigma_0 = np.sqrt(global_epoch * alpha / temp)
+        return sigma_0
+
+
+
+    def clip_updates(update_dict, clip_norm):
+
+        total_norm = 0.0
+        for upd in update_dict.values():
+           if upd is not None:
+              total_norm += upd.norm(2).item() ** 2
+        total_norm = total_norm ** 0.5
+
+        if total_norm > clip_norm:
+           scale = clip_norm / total_norm
+           clipped = {name: upd * scale for name, upd in update_dict.items()}
+        else:
+           clipped = update_dict.copy()
+
+        return clipped, total_norm
+
+    def add_noise_to_updates(update_dict, sensitivity: float, sigma: float):
+
+      noisy = {}
+      
+      for name, upd in update_dict.items():
+          noise = torch.randn_like(upd) * sigma * sensitivity
+          noisy[name] = upd + noise
+      return noisy
+
+ 

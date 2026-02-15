@@ -5,7 +5,7 @@ import numpy as np
 import copy
 from typing import Dict
 from ala import ALA
-
+from utils import Utils
 class FedALAClient:
     """FedALA客户端"""
     
@@ -44,7 +44,7 @@ class FedALAClient:
             threshold=threshold,
             num_pre_loss=num_pre_loss
         )
-        
+        self.clip_norm = 1.0  # 初始裁剪阈值
         # 历史信息
         self.ala_weights_history = []
     
@@ -63,11 +63,9 @@ class FedALAClient:
         self.model.train()
         
         # 优化器
-        optimizer = torch.optim.SGD(
+        optimizer = torch.optim.Adam(
             self.model.parameters(),
-            lr=lr,
-            momentum=momentum,
-            weight_decay=weight_decay
+            lr=lr
         )
         
         criterion = nn.CrossEntropyLoss()
@@ -85,6 +83,10 @@ class FedALAClient:
                 outputs = self.model(data)
                 loss = criterion(outputs, labels)
                 loss.backward()
+                Utils.clip_gradients_by_value(
+                    self.model, 
+                    clip_val=self.clip_norm    # 使用指定分位数作为裁剪阈值
+                )
                 optimizer.step()
                 
                 epoch_loss += loss.item()

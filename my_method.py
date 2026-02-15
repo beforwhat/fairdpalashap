@@ -8,6 +8,10 @@ from utils import Utils
 from ala import ALA
 import numpy as np
 from lr_scheduler import CosineAnnealingLR
+from opacus.accountants.utils import get_noise_multiplier
+from opacus import GradSampleModule
+from opacus.optimizers import DPOptimizer 
+from adaptiveclip import DualEMAClipper  
 class OurMethodClient:
     """你的方法：客户端"""
     
@@ -16,7 +20,7 @@ class OurMethodClient:
                  train_loader: torch.utils.data.DataLoader,
                  test_loader: torch.utils.data.DataLoader,
                  data_distribution: List[int],
-                 device: torch.device):
+                 device: torch.device,use_pseudo:bool,local_epochs:int):
         """
         初始化客户端
         
@@ -34,15 +38,14 @@ class OurMethodClient:
         self.test_loader = test_loader
         self.data_distribution = data_distribution
         self.device = device
-        
+        self.use_pseudo = use_pseudo
+        self.sensitivity = 1.0                     
         # 历史信息
-        self.last_grad_norm = 0.0
-        self.clip_norm = 1.0  # 初始裁剪阈值
-        self.selected_count = 0
         
-        # ALA模块
+        self.clip_norm = 0.5  # 初始裁剪阈值
+        
         self.ala_module = None
-    
+        self.DualEMAClipper = DualEMAClipper(alpha_fast=0.5, alpha_slow=0.99, init_val=1.0)
     def set_ala_module(self, ala_module: ALA):
         """设置ALA模块"""
         self.ala_module = ala_module
@@ -51,8 +54,6 @@ class OurMethodClient:
     def local_train(self,
                 global_model: nn.Module,
                 shapley_value: float,
-                round_idx: int,
-                use_pseudo: bool,
                 use_adaptive_clip: bool,
                 add_dp_noise: bool,
                 sigma: float,
@@ -67,45 +68,38 @@ class OurMethodClient:
         self.model.load_state_dict(global_model.state_dict())
         self.model.to(self.device)
         self.model.train()
-
-        optimizer = torch.optim.SGD(
+       
+        optimizer = torch.optim.Adam(
           self.model.parameters(),
-          lr=lr,
-          momentum=momentum,
-          weight_decay=weight_decay
+          lr=lr
        )
         criterion = nn.CrossEntropyLoss()
 
         epoch_losses = []
         grad_norms = []
-        print('在训练中')
-        print('本地训练轮次',local_epochs)
 
         for epoch in range(local_epochs):
            epoch_loss = 0
            batch_count = 0
            for batch_idx, (data, labels) in enumerate(self.train_loader):
                data, labels = data.to(self.device), labels.to(self.device)
+               
                optimizer.zero_grad()
                outputs = self.model(data)
                loss = criterion(outputs, labels)
                loss.backward()
-               grad_norm = Utils.clip_gradients(self.model, self.clip_norm)
+               grad_norm = Utils.compute_norm(self.model)
                grad_norms.append(grad_norm)
-
-            # 自适应裁剪
-               print('自适应裁剪')
+               use_adaptive_clip=True
                if use_adaptive_clip and len(grad_norms) >= 2:
-                  last_grad = self.last_grad_norm if self.last_grad_norm > 0 else grad_norm
-                  self.clip_norm = Utils.adaptive_clipping(
-                    grad_norm, last_grad, shapley_value,
-                    self.clip_norm, f_param, u_param
+                  clip_val = self.DualEMAClipper.update(grad_norm)
+                  self.clip_norm = Utils.clip_gradients_by_value(
+                     self.model, clip_val
                   )
-
-            # DP噪声
+                #   self.last_grad_norm = grad_norms[-1]
                if add_dp_noise:
-                  Utils.add_dp_noise(self.model, self.clip_norm, sigma)
-
+                   
+                   Utils.add_dp_noise(self.model, self.clip_norm, sigma,batch_size=data.size(0),device=self.device)
                optimizer.step()
                epoch_loss += loss.item()
                batch_count += 1
@@ -130,10 +124,9 @@ class OurMethodClient:
         local_state = self.model.state_dict()
         for name in global_state.keys():
           model_update[name] = local_state[name] - global_state[name]
-
         avg_loss = np.mean(epoch_losses) if epoch_losses else 0
         avg_grad_norm = np.mean(grad_norms) if grad_norms else 0
-        print("本地训练完成")
+
         try:
           return {
           'update': model_update,
@@ -177,7 +170,7 @@ class OurMethodServer:
     def __init__(self, 
                  global_model: nn.Module,
                  num_clients: int,
-                 device: torch.device):
+                 device: torch.device,samples_per_client: int,batch_size: int,local_epochs: int):
         """
         初始化服务器
         
@@ -190,7 +183,7 @@ class OurMethodServer:
         self.num_clients = num_clients
         self.device = device
         self.lr_scheduler = CosineAnnealingLR(
-            initial_lr=0.01,      # 默认初始学习率
+            initial_lr=1e-3,      # 默认初始学习率
             total_epochs=100,     # 默认总轮数
             warmup_epochs=5       # 默认预热5轮
         )
@@ -202,6 +195,9 @@ class OurMethodServer:
         self.global_accuracies = []
         # 数据分布信息（需要在初始化后设置）
         self.data_distributions = None
+        self.samples_per_client = samples_per_client
+        self.batch_size = batch_size
+        self.local_epochs = local_epochs
     def get_current_lr(self) -> float:
         """获取当前学习率（供客户端使用）"""
         return self.lr_scheduler.get_lr()
@@ -335,7 +331,7 @@ class OurMethodServer:
                            target_delta: float, 
                            num_rounds: int,
                            num_selected: int,
-                           total_clients: int,local_epochs: int) -> float:
+                           total_clients: int) -> float:
         """
         计算噪声尺度
         
@@ -350,17 +346,23 @@ class OurMethodServer:
             sigma: 噪声尺度
         """
         # 每轮分配的隐私预算
-        epsilon_per_round = target_epsilon / np.sqrt(num_rounds)
-        
-        # 采样率
         q = num_selected / total_clients
-        epsilon_per_local = epsilon_per_round / np.sqrt(q)
-        epsilon_per_local_dp = epsilon_per_local / np.sqrt(local_epochs)
+        
+        # 计算每个客户端的步数（假设所有客户端样本数相同）
+        steps_per_epoch = max(1, self.samples_per_client // self.batch_size)
+        steps_per_round = self.local_epochs * steps_per_epoch
+        total_steps = num_rounds * num_selected * steps_per_round
 
-        sigma = np.sqrt(2 * np.log(1.25 / target_delta)) /  (epsilon_per_local_dp)
+        # 使用 RDP accountant 求解 sigma
+        sigma = get_noise_multiplier(
+            target_epsilon=target_epsilon,
+            target_delta=target_delta,
+            sample_rate=q,
+            steps=total_steps,
+            accountant='rdp'   # 使用 RDP 会计
+        )
         
         self.noise_scale = sigma
-        print(f'噪声尺度: {sigma:.6f}, 每轮隐私预算: {epsilon_per_round:.6f}, 每轮本地隐私预算: {epsilon_per_local:.6f}, 每轮本地DP隐私预算: {epsilon_per_local_dp:.6f}')
         return sigma
     def test_global_model(self, test_loader) -> float:
         """测试全局模型"""

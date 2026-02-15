@@ -112,6 +112,9 @@ def load_data_and_models(args):
     # 8. 打印数据分配统计
     total_train_samples = sum(len(ds) for ds in train_datasets)
     total_test_samples = sum(len(loader.dataset) for loader in client_test_loaders)
+    client_data_sizes = {}
+    for client_id, loader in enumerate(train_loaders):
+        client_data_sizes[client_id] = len(loader.dataset)  # 训练样本数
     print(f"\n数据分配完成:")
     print(f"  总训练样本: {total_train_samples}")
     print(f"  总测试样本: {total_test_samples}")
@@ -124,6 +127,7 @@ def load_data_and_models(args):
         'global_test_loader': global_test_loader,    # 全局测试集（用于评估全局模型）
         'data_distributions': data_distributions,
         'train_data_list': train_data_list,
+        'client_data_sizes': client_data_sizes,
         'create_model': create_model,
         'dataset_params': dataset_params
     }

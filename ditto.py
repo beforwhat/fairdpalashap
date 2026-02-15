@@ -5,6 +5,7 @@ import numpy as np
 import copy
 from typing import Dict
 from fedavg import FedAvgServer
+from utils import Utils
 class DittoClient:
     """Ditto客户端（个性化联邦学习）"""
     
@@ -26,7 +27,7 @@ class DittoClient:
         self.train_loader = train_loader
         self.test_loader = test_loader
         self.device = device
-        
+        self.clip_norm = 1.0  # 初始裁剪阈值
         # 历史信息
         self.global_losses = []
         self.personal_losses = []
@@ -54,11 +55,9 @@ class DittoClient:
         self.personal_model.train()
         
         # 优化器（只优化个性化模型）
-        optimizer = torch.optim.SGD(
+        optimizer = torch.optim.Adam(
             self.personal_model.parameters(),
-            lr=lr,
-            momentum=momentum,
-            weight_decay=weight_decay
+            lr=lr
         )
         
         criterion = nn.CrossEntropyLoss()
@@ -87,6 +86,10 @@ class DittoClient:
                 
                 loss = loss_local + lambda_param * reg_loss
                 loss.backward()
+                Utils.clip_gradients_by_value(
+                    self.personal_model, 
+                    clip_val=self.clip_norm    # 使用指定分位数作为裁剪阈值
+                )
                 optimizer.step()
                 
                 epoch_loss += loss.item()

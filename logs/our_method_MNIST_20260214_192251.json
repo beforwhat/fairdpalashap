@@ -1,0 +1,105 @@
+{
+  "method": "our_method",
+  "dataset": "MNIST",
+  "num_clients": 10,
+  "global_epochs": 10,
+  "round_accuracies": [
+    9.8,
+    9.8,
+    9.8,
+    9.8,
+    9.8,
+    9.8,
+    9.8,
+    9.8,
+    9.8,
+    9.8
+  ],
+  "client_accuracies": [
+    [
+      9.8,
+      9.0
+    ],
+    [
+      8.8,
+      10.2
+    ],
+    [
+      10.2,
+      8.8
+    ],
+    [
+      10.2,
+      8.8
+    ],
+    [
+      8.8,
+      10.2
+    ],
+    [
+      10.2,
+      8.8
+    ],
+    [
+      8.8,
+      10.2
+    ],
+    [
+      8.8,
+      10.2
+    ],
+    [
+      8.8,
+      10.2
+    ],
+    [
+      8.8,
+      10.2
+    ]
+  ],
+  "fairness_variances": [
+    0.16000000000000028,
+    0.489999999999999,
+    0.489999999999999,
+    0.489999999999999,
+    0.489999999999999,
+    0.489999999999999,
+    0.489999999999999,
+    0.489999999999999,
+    0.489999999999999,
+    0.489999999999999
+  ],
+  "communication_costs": [],
+  "training_losses": [
+    NaN,
+    NaN,
+    NaN,
+    NaN,
+    NaN,
+    NaN,
+    NaN,
+    NaN,
+    NaN,
+    NaN
+  ],
+  "gradient_norms": [
+    45998204926.64989,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "final_global_accuracy": 9.8,
+  "best_global_accuracy": 9.8,
+  "mean_client_accuracy": 9.49,
+  "mean_fairness_variance": 0.45699999999999913,
+  "mean_training_loss": NaN,
+  "mean_gradient_norm": 4599820493.564989,
+  "convergence_round": 1,
+  "convergence_speed": 0.1
+}

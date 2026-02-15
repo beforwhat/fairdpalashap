@@ -7,7 +7,7 @@ from tqdm import tqdm
 import json
 import os
 from datetime import datetime
-
+from utils import Utils
 # 导入基线方法工厂
 from baselines import BaselineFactory
 
@@ -55,14 +55,11 @@ class ExperimentFramework:
         
         # 获取方法特定参数
         method_params = BaselineFactory.get_method_params(self.args.method, self.args)
-        client_data_sizes = {}
-        for client_id, loader in enumerate(train_loaders):
-            client_data_sizes[client_id] = len(loader.dataset)
+        
         # 创建服务器
         server_kwargs = {
             'num_clients': self.args.num_clients,
-            'data_distributions': self.data_distributions,
-            'client_data_sizes': client_data_sizes
+            'data_distributions': self.data_distributions
         }
         server_kwargs.update(method_params)
         
@@ -88,7 +85,7 @@ class ExperimentFramework:
             
             if self.args.method in ['our_method', 'our_method_no_dp']:
                 client_kwargs['data_distribution'] = self.data_distributions.get(client_id, []) if self.data_distributions else []
-            
+                client_kwargs['local_epochs'] = self.args.local_epochs
             # 创建客户端
             client = BaselineFactory.create_client(
                 self.args.method, client_id, model_class(),
@@ -119,12 +116,19 @@ class ExperimentFramework:
                     self.args.target_delta,
                     self.args.global_epochs,
                     self.args.num_selected,
-                    self.args.num_clients,
-                    self.args.local_epochs
+                    self.args.num_clients   
+
                 )
                 print(f"DP噪声尺度: {sigma:.4f}")
                 print(f"隐私预算: ε={self.args.target_epsilon}, δ={self.args.target_delta}")
-        
+            else:
+                sigma = Utils.compute_noise_scale(
+                    self.args.target_epsilon,
+                    self.args.target_delta,
+                    self.args.global_epochs,
+                )
+                print(f"DP噪声尺度: {sigma:.4f}")
+                print(f"隐私预算: ε={self.args.target_epsilon}, δ={self.args.target_delta}")
         # 进度条
         pbar = tqdm(range(self.args.global_epochs), desc="全局训练轮次")
         
@@ -173,15 +177,15 @@ class ExperimentFramework:
                     train_params['lambda_param'] = self.args.ditto_lambda
                 
                 elif self.args.method == 'fedaddp':
+                    train_params['clipping_bound'] = server.get_clipping_bound(client_id)
                     train_params.update({
                         'fisher_threshold': self.args.fisher_threshold,
                         'lambda_1': self.args.lambda_1,
                         'lambda_2': self.args.lambda_2,
                         'beta': self.args.beta,
                         'sigma0': sigma,
-                        'clipping_bound': self.args.clip_init,
                         'no_clip': False,
-                        'no_noise': False
+                        'no_noise': False,
                     })
                 
                 elif self.args.method in ['our_method', 'our_method_no_dp']:
@@ -190,8 +194,7 @@ class ExperimentFramework:
                     
                     train_params.update({
                         'shapley_value': shapley_value,
-                        'round_idx': round_idx,
-                        'use_pseudo': self.args.use_pseudo,
+                        
                         'use_adaptive_clip': self.args.use_adaptive_clip,
                         'add_dp_noise': add_dp,
                         'sigma': sigma if add_dp else 0,
@@ -221,6 +224,7 @@ class ExperimentFramework:
                 )
                 
                 server.aggregate(client_updates, aggregation_weights,selected_clients)
+            
             else:
                 # 平均聚合
                 server.aggregate(client_updates)

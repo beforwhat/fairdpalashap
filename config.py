@@ -52,14 +52,14 @@ class Config:
         parser.add_argument('--batch_size', type=int, default=32, help='批次大小')
         
         # 优化器参数
-        parser.add_argument('--lr', type=float, default=0.01, help='学习率')
+        parser.add_argument('--lr', type=float, default=1e-3, help='学习率')
         parser.add_argument('--momentum', type=float, default=0.9, help='动量')
         parser.add_argument('--weight_decay', type=float, default=1e-4, help='权重衰减')
         
-        # ==================== 隐私参数 ====================
-        parser.add_argument('--target_epsilon', type=float, default=2.0, help='总隐私预算ε')
+        # ==================== 隐私参数 ==================== 16 
+        parser.add_argument('--target_epsilon', type=float, default=16, help='总隐私预算ε') 
         parser.add_argument('--target_delta', type=float, default=1e-5, help='隐私参数δ')
-        parser.add_argument('--clip_init', type=float, default=1.0, help='初始裁剪阈值')
+        parser.add_argument('--clip_init', type=float, default=0.3, help='初始裁剪阈值')
         
         # ==================== 你的方法专用参数 ====================
         parser.add_argument('--shapley_weight', type=float, default=0.5, 
@@ -80,11 +80,11 @@ class Config:
                            help='是否使用自适应裁剪')
         
         # ==================== FedADDP参数 ====================
-        parser.add_argument('--fisher_threshold', type=float, default=0.1,
+        parser.add_argument('--fisher_threshold', type=float, default=0.4,
                            help='Fisher阈值')
-        parser.add_argument('--lambda_1', type=float, default=0.01,
+        parser.add_argument('--lambda_1', type=float, default=0.1,
                            help='FedADDP λ1正则化参数')
-        parser.add_argument('--lambda_2', type=float, default=0.01,
+        parser.add_argument('--lambda_2', type=float, default=0.05,
                            help='FedADDP λ2正则化参数')
         parser.add_argument('--beta', type=float, default=0.1,
                            help='FedADDP β参数')
@@ -164,7 +164,7 @@ class Config:
         # 快速测试模式调整参数
         if args.mode == 'quick_test':
             args.num_clients = args.quick_test_clients
-            args.global_epochs = args.quick_test_epochs
+            args.global_epochs = 30
             args.samples_per_client = args.quick_test_samples
             args.num_selected = max(2, args.num_clients // 5)
             args.verbose = 2
@@ -200,10 +200,10 @@ class Config:
             'global_epochs': 100,
             'local_epochs': 10,
             'batch_size': 32,
-            'lr': 0.01,
+            'lr': 1e-3,
             'momentum': 0.9,
             'weight_decay': 1e-4,
-            'target_epsilon': 2.0,
+            'target_epsilon': 16.0,
             'target_delta': 1e-5,
             'clip_init': 1.0,
             'device': 'cuda' if torch.cuda.is_available() else 'cpu',
