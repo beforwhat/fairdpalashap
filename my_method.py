@@ -99,7 +99,7 @@ class OurMethodClient:
                 #   self.last_grad_norm = grad_norms[-1]
                if add_dp_noise:
                    
-                   Utils.add_dp_noise(self.model, self.clip_norm, sigma,batch_size=data.size(0),device=self.device)
+                   Utils.add_dp_noise(self.model, self.sensitivity, sigma,batch_size=data.size(0),device=self.device)
                optimizer.step()
                epoch_loss += loss.item()
                batch_count += 1
