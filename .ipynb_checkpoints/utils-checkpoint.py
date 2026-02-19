@@ -1,0 +1,435 @@
+# utils.py
+import torch
+import numpy as np
+from scipy.special import comb
+from itertools import chain, combinations
+import torch.nn.functional as F
+from typing import List, Dict, Tuple
+import copy
+from opacus.accountants.utils import get_noise_multiplier
+class Utils:
+    """工具函数类"""
+    
+    @staticmethod
+    def compute_shapley_contributions(model_updates: Dict[int, List[torch.Tensor]], 
+                                     test_accuracies: Dict[int, float]) -> Dict[int, float]:
+        """
+        计算近似Shapley值贡献
+        
+        Args:
+            model_updates: 客户端模型更新 {client_id: [param_updates]}
+            test_accuracies: 客户端测试准确率 {client_id: accuracy}
+            
+        Returns:
+            shapley_values: Shapley值 {client_id: value}
+        """
+        n_clients = len(model_updates)
+        shapley_values = {i: 0.0 for i in range(n_clients)}
+        
+        if n_clients <= 10:  # 客户端较少时精确计算
+            for client_id in range(n_clients):
+                total_contrib = 0
+                for subset in Utils.powersettool(range(n_clients)):
+                    if client_id not in subset:
+                        continue
+                    
+                    subset_with = list(subset)
+                    subset_without = [c for c in subset if c != client_id]
+                    
+                    # 计算边际贡献
+                    if len(subset_with) > 0:
+                        acc_with = np.mean([test_accuracies[c] for c in subset_with])
+                    else:
+                        acc_with = 0
+                    
+                    if len(subset_without) > 0:
+                        acc_without = np.mean([test_accuracies[c] for c in subset_without])
+                    else:
+                        acc_without = 0
+                    
+                    marginal = acc_with - acc_without
+                    weight = 1 / (comb(n_clients - 1, len(subset_with) - 1) * n_clients)
+                    total_contrib += marginal * weight
+                
+                shapley_values[client_id] = total_contrib
+        
+        else:  # 客户端较多时使用蒙特卡洛近似
+            n_samples = min(1000, 2**n_clients)
+            for _ in range(n_samples):
+                # 随机排列
+                perm = np.random.permutation(n_clients)
+                
+                for i, client_id in enumerate(perm):
+                    # 前面的客户端集合
+                    prev_clients = perm[:i]
+                    
+                    # 计算边际贡献
+                    if len(prev_clients) > 0:
+                        acc_before = np.mean([test_accuracies[c] for c in prev_clients])
+                    else:
+                        acc_before = 0
+                    
+                    clients_with = list(prev_clients) + [client_id]
+                    acc_after = np.mean([test_accuracies[c] for c in clients_with])
+                    
+                    marginal = acc_after - acc_before
+                    shapley_values[client_id] += marginal / n_samples
+        
+        # 归一化
+        total = sum(shapley_values.values())
+        if total > 0:
+            shapley_values = {k: v/total for k, v in shapley_values.items()}
+        
+        return shapley_values
+    
+    @staticmethod
+    def powersettool(iterable):
+        """生成幂集"""
+        s = list(iterable)
+        return chain.from_iterable(combinations(s, r) for r in range(len(s)+1))
+    
+    @staticmethod
+    def compute_data_diversity(data_distributions: Dict[int, List[int]]) -> Dict[int, float]:
+        """
+        计算客户端数据多样性（使用熵）
+        
+        Args:
+            data_distributions: 客户端数据分布 {client_id: [class_counts]}
+            
+        Returns:
+            diversities: 数据多样性 {client_id: diversity}
+        """
+        diversities = {}
+        for client_id, class_counts in data_distributions.items():
+            counts = np.array(class_counts)
+            total = counts.sum()
+            if total > 0:
+                probs = counts / total
+                entropy = -np.sum(probs * np.log(probs + 1e-10))
+                diversities[client_id] = entropy
+            else:
+                diversities[client_id] = 0
+        
+        # 归一化
+        max_entropy = max(diversities.values()) if diversities else 1
+        diversities = {k: v/max_entropy for k, v in diversities.items()}
+        
+        return diversities
+    
+    @staticmethod
+    def compute_participation_frequency(selected_counts: Dict[int, int], 
+                                       current_round: int) -> Dict[int, float]:
+        """
+        计算客户端参与频率
+        
+        Args:
+            selected_counts: 客户端被选中的次数
+            current_round: 当前轮数
+            
+        Returns:
+            frequencies: 参与频率 {client_id: frequency}
+        """
+        frequencies = {}
+        for client_id, count in selected_counts.items():
+            frequencies[client_id] = count / max(current_round, 1)
+        
+        return frequencies
+    
+    @staticmethod
+    def select_clients_strategic(shapley_values: Dict[int, float],
+                               diversities: Dict[int, float],
+                               frequencies: Dict[int, float],
+                               num_select: int,
+                               shapley_weight: float = 0.5,
+                               diversity_weight: float = 0.2,
+                               participation_weight: float = 0.3) -> List[int]:
+        """
+        基于Shapley值、数据多样性和参与频率选择客户端
+        
+        Args:
+            shapley_values: Shapley值
+            diversities: 数据多样性
+            frequencies: 参与频率
+            num_select: 选择数量
+            weights: 权重分配
+            
+        Returns:
+            selected_clients: 选中的客户端ID列表
+        """
+        all_clients = list(shapley_values.keys())
+        
+        # 计算综合得分
+        scores = {}
+        for client_id in all_clients:
+            score = (shapley_weight * shapley_values[client_id] +
+                    diversity_weight * diversities[client_id] +
+                    participation_weight * (1 - frequencies[client_id]))  # 参与频率低的优先
+            scores[client_id] = score
+        
+        # 基于概率选择
+        score_values = np.array(list(scores.values()))
+        probs = score_values / score_values.sum()
+        
+        selected_clients = np.random.choice(
+            all_clients,
+            size=min(num_select, len(all_clients)),
+            replace=False,
+            p=probs
+        ).tolist()
+        
+        return selected_clients
+    
+    @staticmethod
+    def compute_aggregation_weights(shapley_values: Dict[int, float],
+                                  diversities: Dict[int, float],
+                                  frequencies: Dict[int, float],
+                                  selected_clients: List[int],
+                                  shapley_weight: float = 0.8,
+                                  diversity_weight: float = 0.1,
+                                  participation_weight: float = 0.1) -> Dict[int, float]:
+        """
+        计算客户端聚合权重
+        
+        Args:
+            shapley_values: Shapley值
+            diversities: 数据多样性
+            frequencies: 参与频率
+            selected_clients: 选中的客户端
+            weights: 权重分配
+            
+        Returns:
+            weights: 聚合权重 {client_id: weight}
+        """
+        weights = {}
+        
+        # 计算每个选中客户端的综合得分
+        scores = {}
+        total_score = 0
+        for client_id in selected_clients:
+            sv = shapley_values.get(client_id, 0.0)
+            dv = diversities.get(client_id, 0.0)
+            fq = frequencies.get(client_id, 1.0) 
+            score = (shapley_weight * sv +
+                    diversity_weight * dv +
+                    participation_weight * (1 - fq))
+            scores[client_id] = score
+            total_score += score
+        
+        # 归一化为权重
+        if total_score > 0:
+            weights = {k: v/total_score for k, v in scores.items()}
+        else:
+            # 平均分配
+            equal_weight = 1.0 / len(selected_clients)
+            weights = {k: equal_weight for k in selected_clients}
+        
+        return weights
+    
+    @staticmethod
+    def adaptive_clipping( shapley_value,
+                               last_clip,last_grad_norm,current_grad_norm, f_param=0.8, u_param=0.5) -> float:
+        relative_change = (current_grad_norm - last_grad_norm) / last_grad_norm
+        if relative_change > 0:
+           new_clip = last_clip * (1 +shapley_value)
+        else:
+            new_clip = last_clip * (1 -shapley_value)
+
+    # 3. 限制阈值范围（避免发散）
+        new_clip = max(new_clip, 0.1)           # 不低于极小值
+        new_clip = min(new_clip, 0.9)  # 单次增长不超过 5 倍（防突变）
+        return new_clip
+    
+
+    def clip_gradients(model: torch.nn.Module, quantile: float) -> float:
+  
+        param_grad_norms = []
+        device = next(model.parameters()).device  # 对齐模型设备（CPU/GPU）
+        for param in model.parameters():
+           if param.grad is not None:
+            # 直接计算张量范数，不转item，保留张量类型
+              grad_norm = param.grad.data.norm(2)
+              param_grad_norms.append(grad_norm)
+    
+        if not param_grad_norms:
+           return 0.0
+    
+    # 2. 计算全局梯度总范数（纯torch）
+        param_grad_norms_tensor = torch.stack(param_grad_norms).to(device)
+        total_norm = torch.sqrt(torch.sum(param_grad_norms_tensor **2)).item()
+    
+        clip_val = torch.quantile(param_grad_norms_tensor, quantile, dim=0, keepdim=True).item()
+
+        for param in model.parameters():
+            if param.grad is not None:
+               param_grad_norm = param.grad.data.norm(2)
+               if param_grad_norm > clip_val:
+                  clip_coef = clip_val / (param_grad_norm + 1e-6)
+                  param.grad.data.mul_(clip_coef)
+    
+        return total_norm
+    def clip_gradients_by_value(model: torch.nn.Module, clip_val: float) -> float:
+
+        # 裁剪梯度
+        for param in model.parameters():
+            if param.grad is not None:
+                param_grad_norm = param.grad.data.norm(2)
+                if param_grad_norm > clip_val:
+                    clip_coef = clip_val / (param_grad_norm + 1e-6)
+                    param.grad.data.mul_(clip_coef) 
+        return clip_val
+    
+    def compute_norm(model: torch.nn.Module) -> float:
+        
+        param_norms = []
+        for param in model.parameters():
+            if param.grad is not None:
+                norm = param.grad.data.norm(2).item()
+                param_norms.append(norm)
+        if not param_norms:
+           return 0.0
+        total_norm = sum(n**2 for n in param_norms) ** 0.5
+        return total_norm
+    @staticmethod
+    def add_dp_noise(model: torch.nn.Module, 
+                    sensitive: float, 
+                    sigma: float,batch_size,device) -> None:
+        """
+        添加差分隐私噪声
+        
+        Args:
+            model: 模型
+            clip_norm: 裁剪阈值
+            sigma: 噪声尺度
+            sensitivity: 敏感度
+        """
+        
+        std = (sensitive * sigma) / batch_size   # 平均梯度上的噪声标准差
+        for param in model.parameters():
+            if param.grad is not None:
+                noise = torch.normal(0, std, size=param.grad.shape, device=device)
+                param.grad.add_(noise)
+    
+    @staticmethod
+    # utils.py 中的修改部分
+
+    def pseudo_label_training(model: torch.nn.Module, 
+                         dataloader: torch.utils.data.DataLoader,
+                         device: torch.device,
+                         confidence_threshold: float = 0.9) -> float:
+
+        model.train()
+        criterion = torch.nn.CrossEntropyLoss()
+    
+        pseudo_count = 0
+        total_count = 0
+    
+        for data, _ in dataloader:
+           data = data.to(device)
+        
+        # 1. 生成伪标签：不需要梯度
+           with torch.no_grad():
+              outputs = model(data)
+              probabilities = F.softmax(outputs, dim=1)
+              max_probs, pseudo_labels = torch.max(probabilities, dim=1)
+              mask = max_probs > confidence_threshold
+        
+        # 2. 计算损失并反向传播：需要梯度
+           if mask.sum() > 0:
+              pseudo_count += mask.sum().item()
+              total_count += mask.size(0)
+              
+              pseudo_outputs = model(data[mask])          # 此步会构建计算图
+              pseudo_loss = criterion(pseudo_outputs, pseudo_labels[mask])
+              pseudo_loss.backward()                     # 现在可以正常反向传播
+    
+        pseudo_ratio = pseudo_count / max(total_count, 1)
+        return pseudo_ratio
+    
+    @staticmethod
+    def compute_fisher_diag(model: torch.nn.Module, 
+                          dataloader: torch.utils.data.DataLoader,
+                          device: torch.device) -> List[torch.Tensor]:
+        """
+        计算Fisher信息矩阵对角线（用于FedADDP）
+        
+        Args:
+            model: 模型
+            dataloader: 数据加载器
+            device: 设备
+            
+        Returns:
+            fisher_diag: Fisher对角线
+        """
+        model.eval()
+        fisher_diag = [torch.zeros_like(param) for param in model.parameters()]
+        
+        for data, labels in dataloader:
+            data, labels = data.to(device), labels.to(device)
+            
+            model.zero_grad()
+            outputs = model(data)
+            loss = F.cross_entropy(outputs, labels)
+            loss.backward()
+            
+            for i, param in enumerate(model.parameters()):
+                if param.grad is not None:
+                    fisher_diag[i] += param.grad.data ** 2
+        
+        # 平均
+        n_batches = len(dataloader)
+        fisher_diag = [f / n_batches for f in fisher_diag]
+        
+        return fisher_diag
+    def compute_noise_scale(target_epsilon: float, 
+                           target_delta: float, 
+                         
+                           global_epoch: int) -> float:
+        """
+        计算噪声尺度
+        
+        Args:
+            target_epsilon: 总隐私预算
+            target_delta: 目标δ
+            num_rounds: 总轮数
+            num_selected: 每轮选择客户端数
+            total_clients: 总客户端数
+            
+        Returns:
+            sigma: 噪声尺度
+        """
+        # 每轮分配的隐私预算
+        
+        alpha = np.ceil(np.log2(1 / target_delta) / target_epsilon + 1)
+
+        temp = 2 * (target_epsilon + np.log(target_delta) / (alpha - 1))
+        sigma_0 = np.sqrt(global_epoch * alpha / temp)
+        return sigma_0
+
+
+
+    def clip_updates(update_dict, clip_norm):
+
+        total_norm = 0.0
+        for upd in update_dict.values():
+           if upd is not None:
+              total_norm += upd.norm(2).item() ** 2
+        total_norm = total_norm ** 0.5
+
+        if total_norm > clip_norm:
+           scale = clip_norm / total_norm
+           clipped = {name: upd * scale for name, upd in update_dict.items()}
+        else:
+           clipped = update_dict.copy()
+
+        return clipped, total_norm
+
+    def add_noise_to_updates(update_dict, sensitivity: float, sigma: float):
+
+      noisy = {}
+      
+      for name, upd in update_dict.items():
+          noise = torch.randn_like(upd) * sigma * sensitivity
+          noisy[name] = upd + noise
+      return noisy
+
+ 

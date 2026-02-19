@@ -4,7 +4,7 @@ import sys
 sys.argv = [
     'quick_fedavg.py',
     '--mode', 'quick_test',
-    '--method', 'dp_fedavg',           # 选择DP-FedAvg方法
+    '--method', 'our_method',           # 选择DP-FedAvg方法
     '--dataset', 'MNIST',        # 自动使用 SimpleCNN
     '--num_clients', '10',
     '--num_selected', '5',

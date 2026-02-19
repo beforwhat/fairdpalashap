@@ -16,8 +16,10 @@ from experiment_config import get_experiment_config
 from experiment_framework import ExperimentFramework
 from data_loader import DatasetLoader
 from models import ModelFactory
+import matplotlib.pyplot as plt
 from visualization import ResultVisualizer
-
+plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei']
+plt.rcParams['axes.unicode_minus'] = False
 
 def setup_environment(args):
     """设置实验环境"""
@@ -229,7 +231,7 @@ def run_ablation_study(args):
         time.sleep(1)
     
     # 可视化比较
-    if args.visualize and all_results:
+    if all_results:
         visualizer = ResultVisualizer(args.plot_dir)
         
         visualizer.plot_accuracy_curves(all_results, 'ablation_accuracy.png')
@@ -289,7 +291,7 @@ def run_comparison_experiment(args, experiment_type):
         time.sleep(1)
     
     # 可视化比较
-    if args.visualize and all_results:
+    if all_results:
         visualizer = ResultVisualizer(args.plot_dir)
         
         visualizer.plot_accuracy_curves(all_results, f'{experiment_type}_accuracy.png')

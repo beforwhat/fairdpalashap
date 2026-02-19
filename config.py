@@ -29,7 +29,7 @@ class Config:
                            help='联邦学习方法')
         
         # ==================== 数据参数 ====================
-        parser.add_argument('--dataset', type=str, default='MNIST',
+        parser.add_argument('--dataset', type=str, default='CIFAR10',
                            choices=['CIFAR10', 'FEMNIST', 'SVHN', 'Synthetic', 'MNIST'],
                            help='数据集')
         parser.add_argument('--num_clients', type=int, default=20, help='客户端总数')
@@ -48,7 +48,7 @@ class Config:
         # ==================== 联邦学习参数 ====================
         parser.add_argument('--num_selected', type=int, default=10, help='每轮选择的客户端数')
         parser.add_argument('--global_epochs', type=int, default=100, help='全局训练轮数')
-        parser.add_argument('--local_epochs', type=int, default=5, help='本地训练轮数')
+        parser.add_argument('--local_epochs', type=int, default=10, help='本地训练轮数')
         parser.add_argument('--batch_size', type=int, default=32, help='批次大小')
         
         # 优化器参数
@@ -82,11 +82,11 @@ class Config:
         # ==================== FedADDP参数 ====================
         parser.add_argument('--fisher_threshold', type=float, default=0.4,
                            help='Fisher阈值')
-        parser.add_argument('--lambda_1', type=float, default=0.1,
+        parser.add_argument('--lambda_1', type=float, default=0.01,
                            help='FedADDP λ1正则化参数')
-        parser.add_argument('--lambda_2', type=float, default=0.05,
+        parser.add_argument('--lambda_2', type=float, default=0.01,
                            help='FedADDP λ2正则化参数')
-        parser.add_argument('--beta', type=float, default=0.1,
+        parser.add_argument('--beta', type=float, default=0.05,
                            help='FedADDP β参数')
         
         # ==================== FedALA参数 ====================
@@ -164,7 +164,7 @@ class Config:
         # 快速测试模式调整参数
         if args.mode == 'quick_test':
             args.num_clients = args.quick_test_clients
-            args.global_epochs = 30
+            args.global_epochs = 100
             args.samples_per_client = args.quick_test_samples
             args.num_selected = max(2, args.num_clients // 5)
             args.verbose = 2
@@ -189,7 +189,7 @@ class Config:
         """获取基础配置（不包含方法特定的默认值）"""
         base_config = {
             'mode': 'full_experiment',
-            'dataset': 'MNIST',
+            'dataset': 'CIFAR10',
             'num_clients': 20,
             'samples_per_client': 1000,
             'test_samples_per_client': 500,

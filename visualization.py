@@ -6,7 +6,8 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple
 import os
 import json
-
+plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei']
+plt.rcParams['axes.unicode_minus'] = False
 class ResultVisualizer:
     """结果可视化器"""
     

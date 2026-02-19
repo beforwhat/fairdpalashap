@@ -1,4 +1,4 @@
-# our_method.py
+ # our_method.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -42,7 +42,7 @@ class OurMethodClient:
         self.sensitivity = 1.0                     
         # 历史信息
         
-        self.clip_norm = 0.5  # 初始裁剪阈值
+        self.clip_norm = 1.0  # 初始裁剪阈值
         
         self.ala_module = None
         self.DualEMAClipper = DualEMAClipper(alpha_fast=0.5, alpha_slow=0.99, init_val=1.0)
@@ -96,6 +96,9 @@ class OurMethodClient:
                   self.clip_norm = Utils.clip_gradients_by_value(
                      self.model, clip_val
                   )
+               else:
+                   clip_val=self.clip_norm
+                   clip_norm = Utils.clip_gradients_by_value(self.model,clip_val)
                 #   self.last_grad_norm = grad_norms[-1]
                if add_dp_noise:
                    
@@ -329,7 +332,7 @@ class OurMethodServer:
     
     def compute_noise_scale(self, target_epsilon: float, 
                            target_delta: float, 
-                           num_rounds: int,
+                           global_epoch: int,
                            num_selected: int,
                            total_clients: int) -> float:
         """
@@ -346,21 +349,10 @@ class OurMethodServer:
             sigma: 噪声尺度
         """
         # 每轮分配的隐私预算
-        q = num_selected / total_clients
-        
-        # 计算每个客户端的步数（假设所有客户端样本数相同）
-        steps_per_epoch = max(1, self.samples_per_client // self.batch_size)
-        steps_per_round = self.local_epochs * steps_per_epoch
-        total_steps = num_rounds * num_selected * steps_per_round
+        alpha = np.ceil(np.log2(1 / target_delta) / target_epsilon + 1)
 
-        # 使用 RDP accountant 求解 sigma
-        sigma = get_noise_multiplier(
-            target_epsilon=target_epsilon,
-            target_delta=target_delta,
-            sample_rate=q,
-            steps=total_steps,
-            accountant='rdp'   # 使用 RDP 会计
-        )
+        temp = 2 * (target_epsilon + np.log(target_delta) / (alpha - 1))
+        sigma = np.sqrt(global_epoch * alpha / temp)
         
         self.noise_scale = sigma
         return sigma

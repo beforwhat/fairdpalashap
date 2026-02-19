@@ -22,8 +22,8 @@ class MYALA:
                 num_pre_loss: int,
                 # ---------- 伪标签集成参数 ----------
                 use_pseudo,
-                pseudo_threshold: float = 0.8,
-                pseudo_weight: float = 0.5,
+                pseudo_threshold: float = 0.6,
+                pseudo_weight: float = 0.3,
                 max_iter: int = 30):      # 最大迭代保护
         """
         Args:

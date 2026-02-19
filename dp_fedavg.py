@@ -148,7 +148,7 @@ class DPFedAvgServer(FedAvgServer):
         self.batch_size = batch_size
     def compute_noise_scale(self, target_epsilon: float, 
                            target_delta: float, 
-                           num_rounds: int,
+                           global_epoch: int,
                            num_selected: int,
                            total_clients: int) -> float:
         """
@@ -165,21 +165,10 @@ class DPFedAvgServer(FedAvgServer):
             sigma: 噪声尺度
         """
         # 每轮分配的隐私预算
-        q = num_selected / total_clients
-        
-        # 计算每个客户端的步数（假设所有客户端样本数相同）
-        steps_per_epoch = max(1, self.samples_per_client // self.batch_size)
-        steps_per_round = self.local_epochs * steps_per_epoch
-        total_steps = num_rounds * num_selected * steps_per_round
+        alpha = np.ceil(np.log2(1 / target_delta) / target_epsilon + 1)
 
-        # 使用 RDP accountant 求解 sigma
-        sigma = get_noise_multiplier(
-            target_epsilon=target_epsilon,
-            target_delta=target_delta,
-            sample_rate=q,
-            steps=total_steps,
-            accountant='rdp'   # 使用 RDP 会计
-        )
+        temp = 2 * (target_epsilon + np.log(target_delta) / (alpha - 1))
+        sigma_0 = np.sqrt(global_epoch * alpha / temp)
         
         self.noise_scale = sigma
         return sigma
